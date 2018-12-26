@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"fmt"
 	"strings"
+	"runtime"
 )
 
 type TRFileHook struct {
@@ -76,6 +77,19 @@ func NewTRFileHook(logdir,filename,when string) (*TRFileHook,error) {
 func (h *TRFileHook) Fire(entry *logrus.Entry) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	_,file,line,ok:=runtime.Caller(1)
+	for i:=2;i<15;i++{
+		if !ok{
+			break
+		}
+		if strings.Index(file,"logrus-hooks/TimedRotatingFileHook")<0&&strings.Index(file,"github.com/sirupsen/logrus")<0{
+			break
+		}
+		_,file,line,ok=runtime.Caller(i)
+
+	}
+	entry.Data["file"]=file
+	entry.Data["line"]=line
 	ls,err:=entry.String()
 	if err!=nil{
 		return err

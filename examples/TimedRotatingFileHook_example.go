@@ -16,7 +16,7 @@ func main()  {
 		os.Exit(1)
 	}
 	log.AddHook(hook)
-	for i:=0;i<=60;i++{
+	for i:=0;i<=1;i++{
 		time.Sleep(time.Second*1)
 		log.Errorln(i)
 
