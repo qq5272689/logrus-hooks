@@ -7,6 +7,8 @@ import (
 	"sync"
 	"errors"
 	"path/filepath"
+	"fmt"
+	"strings"
 )
 
 type TRFileHook struct {
@@ -22,11 +24,45 @@ type TRFileHook struct {
 	FilePath string
 }
 
-func NewTRFileHook(logdir,filename,errfilename,when string) (*TRFileHook,error) {
+type WriteErr struct {
+	Errs []error
+}
+
+func (e *WriteErr) AddErr(err error)  {
+	e.Errs=append(e.Errs,err)
+}
+
+func (e WriteErr) Error() string {
+	err_strs:=[]string{}
+	for i,err:=range e.Errs{
+		err_strs=append(err_strs,fmt.Sprintf("WriteErr %d:%s",i,err))
+	}
+	return strings.Join(err_strs,";")
+}
+
+
+type NewWriterErr struct {
+	Errs []error
+}
+
+func (e *NewWriterErr) AddErr(err error)  {
+	e.Errs=append(e.Errs,err)
+}
+
+func (e NewWriterErr) Error() string {
+	err_strs:=[]string{}
+	for i,err:=range e.Errs{
+		err_strs=append(err_strs,fmt.Sprintf("NewWriteErr %d:%s",i,err))
+	}
+	return strings.Join(err_strs,";")
+}
+
+
+func NewTRFileHook(logdir,filename,when string) (*TRFileHook,error) {
 	h := &TRFileHook{}
 	h.FilePath=logdir
 	h.FileName=filename
-	h.FileErrName=errfilename
+	h.FileErrName=filename+"-err"
 	h.When=when
 	h.NowTime=time.Now()
 	if err:=h.newwrite();err!=nil{
@@ -45,42 +81,34 @@ func (h *TRFileHook) Fire(entry *logrus.Entry) error {
 		return err
 	}
 	lsb:=[]byte(ls)
-	if h.logstr(h.NowTime)!=h.logstr(entry.Time){
-		nt := time.Now()
-		if h.NowTime.UnixNano()<entry.Time.UnixNano()&&h.logstr(nt)==h.logstr(entry.Time){
-			h.updatewrite(entry.Time)
-		}
+	nt := time.Now()
+	if h.logstr(h.NowTime)!=h.logstr(nt){
+		h.updatewrite(nt)
 	}
+	werr:=new(WriteErr)
 	if entry.Level==logrus.ErrorLevel||entry.Level==logrus.FatalLevel||entry.Level==logrus.PanicLevel{
-		errstr:=""
 		if _,err:=h.MainDateWriter.Write(lsb);err!=nil{
-			errstr+="MainDateWriter err:"+err.Error()+";"
+			werr.AddErr(err)
 		}
 		if _,err:=h.MainWriter.Write(lsb);err!=nil{
-			errstr+="MainWriter err:"+err.Error()+";"
+			werr.AddErr(err)
 		}
 		if _,err:=h.ErrWriter.Write(lsb);err!=nil{
-			errstr+="ErrWriter err:"+err.Error()+";"
+			werr.AddErr(err)
 		}
 		if _,err:=h.ErrDateWriter.Write(lsb);err!=nil{
-			errstr+="ErrDateWriter err:"+err.Error()+";"
+			werr.AddErr(err)
 		}
-		if len(errstr)>0{
-			return errors.New(errstr)
-		}
-
-
 	}else {
-		errstr:=""
 		if _,err:=h.MainDateWriter.Write(lsb);err!=nil{
-			errstr+="MainDateWriter err:"+err.Error()+";"
+			werr.AddErr(err)
 		}
 		if _,err:=h.MainWriter.Write(lsb);err!=nil{
-			errstr+="MainWriter err:"+err.Error()+";"
+			werr.AddErr(err)
 		}
-		if len(errstr)>0{
-			return errors.New(errstr)
-		}
+	}
+	if len(werr.Errs)>0{
+		return werr
 	}
 	return nil
 
@@ -96,23 +124,37 @@ func (h *TRFileHook) newwrite() (err error) {
 			return errors.New("路径:"+h.FilePath+"非目录！！！")
 		}
 	}
+	nwerr:=new(NewWriterErr)
 	timestr := h.logstr(h.NowTime)
 	mainfile :=filepath.Join(h.FilePath,h.FileName)
 	mainfiledate :=filepath.Join(h.FilePath,h.FileName+"-"+timestr)
-	if h.MainWriter,err = os.OpenFile(mainfile,os.O_CREATE|os.O_RDWR|os.O_TRUNC,0664);err!=nil{
-		return errors.New("文件:"+mainfile+"打开失败！！！")
+	mainfile_flag:=os.O_CREATE|os.O_RDWR|os.O_APPEND
+	if fi,err:=os.Stat(mainfile);err==nil&&h.logstr(fi.ModTime())!=h.logstr(h.NowTime){
+		mainfile_flag=os.O_CREATE|os.O_RDWR|os.O_TRUNC
+	}
+	if h.MainWriter,err = os.OpenFile(mainfile,mainfile_flag,0664);err!=nil{
+		nwerr.AddErr(err)
 	}
 	if h.MainDateWriter,err = os.OpenFile(mainfiledate,os.O_CREATE|os.O_APPEND|os.O_RDWR,0664);err!=nil{
-		return errors.New("文件:"+mainfiledate+"打开失败！！！")
+		nwerr.AddErr(err)
 	}
 
 	errfile :=filepath.Join(h.FilePath,h.FileErrName)
 	errfiledate :=filepath.Join(h.FilePath,h.FileErrName+"-"+timestr)
-	if h.ErrWriter,err = os.OpenFile(errfile,os.O_CREATE|os.O_RDWR|os.O_TRUNC,0664);err!=nil{
-		return errors.New("文件:"+errfile+"打开失败！！！")
+
+	errfile_flag:=os.O_CREATE|os.O_RDWR|os.O_APPEND
+	if fi,err:=os.Stat(errfile);err==nil&&h.logstr(fi.ModTime())!=h.logstr(h.NowTime){
+		errfile_flag=os.O_CREATE|os.O_RDWR|os.O_TRUNC
+	}
+
+	if h.ErrWriter,err = os.OpenFile(errfile,errfile_flag,0664);err!=nil{
+		nwerr.AddErr(err)
 	}
 	if h.ErrDateWriter,err = os.OpenFile(errfiledate,os.O_CREATE|os.O_APPEND|os.O_RDWR,0664);err!=nil{
-		return errors.New("文件:"+errfiledate+"打开失败！！！")
+		nwerr.AddErr(err)
+	}
+	if len(nwerr.Errs)>0{
+		return nwerr
 	}
 	return nil
 

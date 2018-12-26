@@ -8,7 +8,7 @@ import (
 func TestLocalhostAddAndPrint(t *testing.T) {
 	log := logrus.New()
 	log.Formatter=&logrus.JSONFormatter{}
-	hook, err := NewTRFileHook("/tmp/logs","test.log","test-error.log","H")
+	hook, err := NewTRFileHook("/tmp/logs","test.log","H")
 
 	if err != nil {
 		t.Errorf("Unable to connect to local syslog.")
